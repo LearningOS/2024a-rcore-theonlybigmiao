@@ -3,20 +3,20 @@
 //! Everything about task management, like starting and switching tasks is
 //! implemented here.
 //!
-//! A single global instance of [`TaskManager`] called `TASK_MANAGER` controls
+// ! A single global instance of [`TaskManager`] called `TASK_MANAGER` controls
 //! all the tasks in the operating system.
 //!
 //! Be careful when you see `__switch` ASM function in `switch.S`. Control flow around this function
 //! might not be what you expect.
-
 mod context;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+// use crate::syscall;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -51,10 +51,7 @@ lazy_static! {
     /// Global variable: TASK_MANAGER
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
-        let mut tasks = [TaskControlBlock {
-            task_cx: TaskContext::zero_init(),
-            task_status: TaskStatus::UnInit,
-        }; MAX_APP_NUM];
+        let mut tasks = [TaskControlBlock {task_cx:TaskContext::zero_init(),task_status:TaskStatus::UnInit, syscall_times:[0;MAX_SYSCALL_NUM] }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
@@ -72,6 +69,17 @@ lazy_static! {
 }
 
 impl TaskManager {
+
+    fn get_syscall_times(&self)->[u32;MAX_SYSCALL_NUM]{
+        let inner=self.inner.exclusive_access();
+        return inner.tasks[inner.current_task].syscall_times.clone();
+    }
+
+    fn add_syscall_times(&self,syscall_id:usize){
+        let mut inner = self.inner.exclusive_access();
+        let current_task=inner.current_task;
+        inner.tasks[current_task].syscall_times[syscall_id]+=1;
+    }
     /// Run the first task in task list.
     ///
     /// Generally, the first task in task list is an idle task (we call it zero process later).
@@ -136,6 +144,17 @@ impl TaskManager {
         }
     }
 }
+
+/// increase the number of a sys_call_task,and make it public for convenience.
+pub fn add_syscall_times(syscall_id:usize){
+    TASK_MANAGER.add_syscall_times(syscall_id);
+}
+
+/// to get the time of the system.
+pub fn get_syscall_times()->[u32;MAX_SYSCALL_NUM]{
+    TASK_MANAGER.get_syscall_times()
+}
+
 
 /// Run the first task in task list.
 pub fn run_first_task() {
